@@ -1,0 +1,103 @@
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: always
+    ports:
+      - "8000:8000"      # Nur lokal erreichbar
+      - "9443:9443"      # Nur lokal erreichbar
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - management_network
+
+  mariadb:
+    image: mariadb:latest
+    container_name: mariadb
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    ports:
+      - "3306:3306"      # Nur lokal erreichbar
+    networks:
+      - app_network
+    # Health Check für MariaDB
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: phpmyadmin
+    restart: always
+    ports:
+      - "8080:80"        # Nur lokal erreichbar
+    environment:
+      PMA_HOST: mariadb
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - app_network
+
+# Backend API
+  backend:
+    build: ./backend
+    container_name: backend
+    restart: always
+    ports:
+      - "3001:3001"
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_NAME: ${MYSQL_DATABASE}
+      JWT_SECRET: klasse41_super_geheimer_jwt_schluessel_2024
+      PORT: 3001
+      NODE_ENV: production
+    depends_on:
+      mariadb:
+        condition: service_healthy  # Warte bis MariaDB gesund ist
+    networks:
+      - app_network
+    # Restart-Policy für bessere Stabilität
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+# Frontend React App
+  frontend:
+    build: ./app
+    container_name: frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - app_network
+
+volumes:
+  portainer_data:
+  mariadb_data:
+
+networks:
+  app_network:
+    driver: bridge
+  management_network:
+    driver: bridge
